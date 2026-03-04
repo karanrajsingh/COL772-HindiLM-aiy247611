@@ -63,4 +63,9 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     Ensure that the function takes in a batch of data and outputs a dictionary of tensors ready to be fed into the model.
     """
     PAD_ID = 0  # Assume 0 is the padding token ID
+
+    # Here you need to perform padding
+    # Should Attention mask be zero padded
+
+
     raise NotImplementedError("Implement collate_fn as described in assignment document")
