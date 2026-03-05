@@ -112,7 +112,6 @@ def read_data(path: Path) -> Dict[str, Any]:
 def read_weights(path: Path) -> Dict[str, torch.Tensor]:
     """Load a serialized state dict (string -> tensor) from disk."""
 
-    breakpoint()
     state_dict = torch.load(path, map_location="cpu")
     if not isinstance(state_dict, dict):
         raise TypeError("weights file must contain a state dict")
@@ -141,11 +140,10 @@ def match(gold_outputs, model_outputs):
 def main() -> None:
     args = parse_args()
     config = read_config(args.config)
-    # input_ids, gold_outputs = read_data(args.input_ids)
+    input_ids, gold_outputs = read_data(args.input_ids)
     state_dict = read_weights(args.weights)
 
     model = load_model(config=config, weights=state_dict)
-    breakpoint()
     st = time.time()
     outputs = run_model(model=model, input_ids=input_ids, vocab_size=config["vocab_size"])
     en = time.time()

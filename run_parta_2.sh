@@ -19,7 +19,7 @@ folders=$(ls -d parta/data/case1/)
 # Loop through each folder and run the evaluation script
 for folder in $folders; do
     echo "Processing $folder..."
-    python -m parta.check --config "$folder/config.json" \
+    python3 -m parta.check --config "$folder/config.json" \
         --input-ids "$folder/model_outputs/" \
         --weights "$folder/model_weights.pth"
     echo "Finished processing $folder."

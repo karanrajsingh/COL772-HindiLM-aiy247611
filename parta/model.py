@@ -19,12 +19,11 @@ def get_positional_embeddings(d_model):
     pos_den = torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_den = torch.pow(10000,(2*torch.floor((pos_den+1)/2))/d_model)
     pos_val = pos_num/pos_den
-    sin_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(1)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
-    cos_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(0)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
-    pos_embed = torch.zeros(max_sequence_len, d_model, dtype=float32, device=device)
+    sin_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == float(1)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    cos_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == float(0)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    pos_embed = torch.zeros(max_sequence_len, d_model, dtype=torch.float32, device=device)
     pos_embed[sin_mask] = torch.sin(pos_val[sin_mask])
     pos_embed[cos_mask] = torch.cos(pos_val[cos_mask])
-    breakpoint()
     return pos_embed
     
 
@@ -41,9 +40,9 @@ class LanguageModel(nn.Module):
         self.config = config
         super().__init__()
         # 1. Input embeddings
-        self.embed = nn.Embedding(self.config.vocab_size, self.config.d_model)
+        self.embed = nn.Embedding(self.config["vocab_size"], self.config["d_model"])
         # 2. Positional Encoding
-        self.pos_embed = get_positional_embeddings(self.config.d_model)
+        self.pos_embed = get_positional_embeddings(self.config['d_model'])
         # 3. Transformer block
         self.layer_norm = {}
         self.query = {}
@@ -52,31 +51,31 @@ class LanguageModel(nn.Module):
         self.output = {}
         self.up_proj = {}
         self.down_proj = {}
-        for layer in range(1, self.config.n_layers+1):
+        for layer in range(1, self.config['n_layers']+1):
             # a. LayerNorm(X(l-1))
-            self.layer_norm[f'{layer}_1'] = nn.LayerNorm(d_model, elementwise_affine=True)
+            self.layer_norm[f'{layer}_1'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             # b. Multi-Head Attention
-            for head in range(1, self.config.n_heads+1):
-                self.query[f'{layer}_{head}'] = nn.Linear(self.config.d_model, self.config.d_head)
-                self.key[f'{layer}_{head}'] = nn.Linear(self.config.d_model, self.config.d_head)
-                self.value[f'{layer}_{head}'] = nn.Linear(self.config.d_model, self.config.d_head)
-            self.output[f'{layer}'] = nn.Linear(self.config.d_model, self.config.d_model)
+            for head in range(1, self.config['n_heads']+1):
+                self.query[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
+                self.key[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
+                self.value[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
+            self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'])
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
             # Handle in forward
             # d. LayerNorm(Xnet(l-1))
-            self.layer_norm[f'{layer}_2'] = nn.LayerNorm(d_model, elementwise_affine=True)
+            self.layer_norm[f'{layer}_2'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             # e. UpProjection
-            self.up_proj[f'{layer}'] = nn.Linear(self.config.d_model, 4*self.config.d_model, bias=True)
+            self.up_proj[f'{layer}'] = nn.Linear(self.config['d_model'], 4*self.config['d_model'], bias=True)
             # f. Non-linearity
             self.activation = nn.GELU()
             # g. DownProjection
-            self.down_proj[f'{layer}'] = nn.Linear(4*self.config.d_model, self.config.d_model, bias=True)
+            self.down_proj[f'{layer}'] = nn.Linear(4*self.config['d_model'], self.config['d_model'], bias=True)
             # h. Residual Connection: X(l) = Xnet(l-1) + Z2(l)
             # Handle in forward
         # 4. Final Normalization
-        self.layer['final'] = nn.LayerNorm(d_model, elementwise_affine=True)
+        self.layer_norm['final'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
         # 5. Logits
-        self.logits = nn.Embedding(self.config.d_model, self.config.vocab_size)
+        self.logits = nn.Linear(self.config['d_model'], self.config['vocab_size'])
 
 
     def set_weights(self, weights: Dict[str, Any]):
