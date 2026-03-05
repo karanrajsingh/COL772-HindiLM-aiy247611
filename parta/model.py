@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Any, Dict, List
 from torch.nn.utils.rnn import pad_sequence
 from torch.nn import functional as F
+import numpy as np
 
 
 max_sequence_len = 512
@@ -128,8 +129,46 @@ class LanguageModel(nn.Module):
             - A tensor of shape (batch_size, sequence_len, vocab_size) containing the logits for each token in the vocabulary.
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
+        global device
+        x_0 = self.embed(input_ids) + self.pos_embed.unsqueeze(dim=0).expand(input_ids.shape[0], -1, -1)
+        x_lp = x_0
+        for layer in range(1, self.config['n_layers']+1):
+            # Core attention block
+            x_lp_norm = self.layer_norm[f'{layer}_1'](x_lp)
+            query_embed = {}
+            key_embed = {}
+            val_embed = {}
+            score = {}
+            final_embed = []
+            # ToDo optimization: parallelize the for loops and compute Q, K, V in parallel on GPU
+            for head in range(1, self.config['n_heads']+1):
+                query_embed[head] = self.query[f'{layer}_{head}'](x_lp_norm)
+                key_embed[head] = self.key[f'{layer}_{head}'](x_lp_norm)
+                val_embed[head] = self.value[f'{layer}_{head}'](x_lp_norm)
+
+                score[head] = (query_embed[head] @ key_embed[head].transpose(1, 2))/np.sqrt(self.config["d_head"])
+                if self.config['mode'] == "tanh-clipped":
+                    score[head] = self.config['tau'] * nn.Tanh(score[head])
+                # Causal attention
+                score[head] = F.softmax(score[head])
+                final_embed.append(score[head] @ val_embed[head])
+            z1 = self.output[f'{layer}'](torch.cat(final_embed, dim=2))
+            x_lp = x_lp + z1
+            # Feedforward network
+            x_lp_norm = self.layer_norm[f'{layer}_2'](x_lp)
+            x_lp_norm = self.up_proj[f'{layer}'](x_lp_norm)
+            x_lp_norm = self.activation(x_lp_norm)
+            z2 = self.down_proj[f'{layer}'](x_lp_norm)
+            xl = x_lp + z2
+            x_lp = xl
+            
+        # Use Attention masks
+        output = self.layer_norm['final'](x_lp)
+        logits = self.logits(output)
         breakpoint()
-        raise NotImplementedError("Implement forward as described in assignment document")
+        return logits
+        
+        # raise NotImplementedError("Implement forward as described in assignment document")
 
         
 
