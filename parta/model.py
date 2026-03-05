@@ -129,7 +129,7 @@ class LanguageModel(nn.Module):
             - A tensor of shape (batch_size, sequence_len, vocab_size) containing the logits for each token in the vocabulary.
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
-        global device
+        global device, max_sequence_len
         x_0 = self.embed(input_ids) + self.pos_embed.unsqueeze(dim=0).expand(input_ids.shape[0], -1, -1)
         x_lp = x_0
         for layer in range(1, self.config['n_layers']+1):
@@ -149,8 +149,13 @@ class LanguageModel(nn.Module):
                 score[head] = (query_embed[head] @ key_embed[head].transpose(1, 2))/np.sqrt(self.config["d_head"])
                 if self.config['mode'] == "tanh-clipped":
                     score[head] = self.config['tau'] * nn.Tanh(score[head])
-                # Causal attention
-                score[head] = F.softmax(score[head])
+                # Causal attention + Use Attention masks
+                index = torch.arange(max_sequence_len, device=device)
+                causal_mask = (index.unsqueeze(0) <= index.unsqueeze(1)).unsqueeze(0)
+                att_mask = attention_mask.bool().unsqueeze(1)
+                score[head] = score[head].masked_fill(~att_mask, float("-inf"))
+                score[head] = score[head].masked_fill(~causal_mask, float("-inf"))
+                score[head] = F.softmax(score[head], dim=2)
                 final_embed.append(score[head] @ val_embed[head])
             z1 = self.output[f'{layer}'](torch.cat(final_embed, dim=2))
             x_lp = x_lp + z1
@@ -162,10 +167,9 @@ class LanguageModel(nn.Module):
             xl = x_lp + z2
             x_lp = xl
             
-        # Use Attention masks
         output = self.layer_norm['final'](x_lp)
         logits = self.logits(output)
-        breakpoint()
+        # breakpoint()
         return logits
         
         # raise NotImplementedError("Implement forward as described in assignment document")
@@ -197,7 +201,8 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     global device, max_sequence_len
     input_list = batch['input_ids']
     mask_list = batch['attention_mask']
-    pad_len = max_sequence_len - input_list[0].size()[0]
+    len = input_list[0].size()[0]
+    pad_len = max_sequence_len - len
     input_list[0] = F.pad(input_list[0], (0, pad_len), value=PAD_ID)
     mask_list[0] = F.pad(mask_list[0], (0, pad_len), value=0)
     padded_input = pad_sequence(input_list, batch_first=True, padding_value=PAD_ID)
@@ -205,6 +210,8 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     padded_batch = {}
     padded_batch['input_ids'] = padded_input
     padded_batch['attention_mask'] = padded_mask
+    input_list[0] = input_list[0][:len]
+    mask_list[0] = mask_list[0][:len]
     return padded_batch
 
     # raise NotImplementedError("Implement collate_fn as described in assignment document")
