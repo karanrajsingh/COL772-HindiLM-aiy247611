@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Any, Dict, List
 
 
-max_sequence_len = 2000 # Random setting
+max_sequence_len = 512
 device = None
 
 def set_device():
@@ -19,11 +19,12 @@ def get_positional_embeddings(d_model):
     pos_den = torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_den = torch.pow(10000,(2*torch.floor((pos_den+1)/2))/d_model)
     pos_val = pos_num/pos_den
-    sin_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(1)).unsqueeze(dim=0).expand(dim=0, max_sequence_len)
-    cos_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(0)).unsqueeze(dim=0).expand(dim=0, max_sequence_len)
+    sin_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(1)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    cos_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == torch.float32(0)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_embed = torch.zeros(max_sequence_len, d_model, dtype=float32, device=device)
     pos_embed[sin_mask] = torch.sin(pos_val[sin_mask])
     pos_embed[cos_mask] = torch.cos(pos_val[cos_mask])
+    breakpoint()
     return pos_embed
     
 
@@ -87,7 +88,9 @@ class LanguageModel(nn.Module):
         Parameters:
             - weights: A dictionary containing the model's weights. The structure of this dictionary will depend on how you design your model.
         """
-        raise NotImplementedError("Implement set_weights as described in assignment document")
+        # raise NotImplementedError("Implement set_weights as described in assignment document")
+
+
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
@@ -115,7 +118,7 @@ def load_model(config: Dict[str, Any], weights: Dict[str, Any]):
     """
 
     model = LanguageModel(config)
-    model.set_weights(weights)
+    # model.set_weights(weights)
 
     return model
 
