@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import Any, Dict, List
+from torch.nn.utils.rnn import pad_sequence
+from torch.nn import functional as F
 
 
 max_sequence_len = 512
@@ -9,12 +11,13 @@ device = None
 def set_device():
     global device
     if torch.cuda.is_available():
-        device = torch.device("cuda")
+        device = torch.device("cuda:1")
     else:
         device = torch.device("cpu")
 
 def get_positional_embeddings(d_model):
     global device, max_sequence_len
+    set_device()
     pos_num = torch.arange(start=1, end=max_sequence_len+1, dtype=torch.float32, device=device).unsqueeze(dim=1).expand(max_sequence_len, d_model)
     pos_den = torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_den = torch.pow(10000,(2*torch.floor((pos_den+1)/2))/d_model)
@@ -44,22 +47,22 @@ class LanguageModel(nn.Module):
         # 2. Positional Encoding
         self.pos_embed = get_positional_embeddings(self.config['d_model'])
         # 3. Transformer block
-        self.layer_norm = {}
-        self.query = {}
-        self.key = {}
-        self.value = {}
-        self.output = {}
-        self.up_proj = {}
-        self.down_proj = {}
+        self.layer_norm = nn.ModuleDict()       
+        self.query = nn.ModuleDict()
+        self.key = nn.ModuleDict()
+        self.value = nn.ModuleDict()
+        self.output = nn.ModuleDict()
+        self.up_proj = nn.ModuleDict()
+        self.down_proj = nn.ModuleDict()
         for layer in range(1, self.config['n_layers']+1):
             # a. LayerNorm(X(l-1))
             self.layer_norm[f'{layer}_1'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             # b. Multi-Head Attention
             for head in range(1, self.config['n_heads']+1):
-                self.query[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
-                self.key[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
-                self.value[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'])
-            self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'])
+                self.query[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
+                self.key[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
+                self.value[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
+            self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
             # Handle in forward
             # d. LayerNorm(Xnet(l-1))
@@ -75,7 +78,7 @@ class LanguageModel(nn.Module):
         # 4. Final Normalization
         self.layer_norm['final'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
         # 5. Logits
-        self.logits = nn.Linear(self.config['d_model'], self.config['vocab_size'])
+        self.logits = nn.Linear(self.config['d_model'], self.config['vocab_size'], bias=False)
 
 
     def set_weights(self, weights: Dict[str, Any]):
@@ -88,6 +91,28 @@ class LanguageModel(nn.Module):
             - weights: A dictionary containing the model's weights. The structure of this dictionary will depend on how you design your model.
         """
         # raise NotImplementedError("Implement set_weights as described in assignment document")
+        # As per assignment, no transpose where pre-multiplication is done, and transpose where post-multiplication is done.
+        with torch.no_grad():
+            state_dict = {}
+            state_dict['embed.weight'] = weights['W_vocab'].t()
+            for layer in range(1, self.config['n_layers']+1):
+                state_dict[f'layer_norm.{layer}_1.weight'] = weights[f'gamma_{layer}_1']
+                state_dict[f'layer_norm.{layer}_1.bias'] = weights[f'beta_{layer}_1']
+                for head in range(1, self.config['n_heads']+1):
+                    state_dict[f'query.{layer}_{head}.weight'] = weights[f'W_{layer}_Q_{head}']
+                    state_dict[f'key.{layer}_{head}.weight'] = weights[f'W_{layer}_K_{head}']
+                    state_dict[f'value.{layer}_{head}.weight'] = weights[f'W_{layer}_V_{head}']
+                state_dict[f'output.{layer}.weight'] = weights[f'W_{layer}_O']
+                state_dict[f'layer_norm.{layer}_2.weight'] = weights[f'gamma_{layer}_2']
+                state_dict[f'layer_norm.{layer}_2.bias'] = weights[f'beta_{layer}_2']
+                state_dict[f'up_proj.{layer}.weight'] = weights[f'W_{layer}_up'].t()
+                state_dict[f'up_proj.{layer}.bias'] = weights[f'b_{layer}_up']
+                state_dict[f'down_proj.{layer}.weight'] = weights[f'W_{layer}_down'].t()
+                state_dict[f'down_proj.{layer}.bias'] = weights[f'b_{layer}_down']
+            state_dict['layer_norm.final.weight'] = weights['gamma_final']  
+            state_dict['layer_norm.final.bias'] = weights['beta_final']
+            state_dict['logits.weight'] = weights['W_devocab'].t()
+            self.load_state_dict(state_dict)
 
 
 
@@ -103,6 +128,7 @@ class LanguageModel(nn.Module):
             - A tensor of shape (batch_size, sequence_len, vocab_size) containing the logits for each token in the vocabulary.
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
+        breakpoint()
         raise NotImplementedError("Implement forward as described in assignment document")
 
         
@@ -117,8 +143,7 @@ def load_model(config: Dict[str, Any], weights: Dict[str, Any]):
     """
 
     model = LanguageModel(config)
-    # model.set_weights(weights)
-
+    model.set_weights(weights)
     return model
 
 
@@ -130,8 +155,17 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     """
     PAD_ID = 0  # Assume 0 is the padding token ID
 
-    # Here you need to perform padding
-    # Should Attention mask be zero padded
+    global device, max_sequence_len
+    input_list = batch['input_ids']
+    mask_list = batch['attention_mask']
+    pad_len = max_sequence_len - input_list[0].size()[0]
+    input_list[0] = F.pad(input_list[0], (0, pad_len), value=PAD_ID)
+    mask_list[0] = F.pad(mask_list[0], (0, pad_len), value=0)
+    padded_input = pad_sequence(input_list, batch_first=True, padding_value=PAD_ID)
+    padded_mask = pad_sequence(mask_list, batch_first=True, padding_value=0)
+    padded_batch = {}
+    padded_batch['input_ids'] = padded_input
+    padded_batch['attention_mask'] = padded_mask
+    return padded_batch
 
-
-    raise NotImplementedError("Implement collate_fn as described in assignment document")
+    # raise NotImplementedError("Implement collate_fn as described in assignment document")
