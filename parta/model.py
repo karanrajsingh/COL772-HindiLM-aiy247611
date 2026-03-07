@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from torch.nn.utils.rnn import pad_sequence
 from torch.nn import functional as F
 import numpy as np
+import math
 
 
 max_sequence_len = 512
@@ -11,25 +12,25 @@ device = None
 
 def set_device():
     global device
-    if torch.cuda.is_available():
-        device = torch.device("cuda:1")
-    else:
-        device = torch.device("cpu")
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda:1")
+    # else:
+    #     device = torch.device("cpu")
+    device = torch.device("cpu")
 
 def get_positional_embeddings(d_model):
     global device, max_sequence_len
     set_device()
-    pos_num = torch.arange(start=1, end=max_sequence_len+1, dtype=torch.float32, device=device).unsqueeze(dim=1).expand(max_sequence_len, d_model)
-    pos_den = torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
-    pos_den = torch.pow(10000,(2*torch.floor((pos_den+1)/2))/d_model)
+    pos_num = torch.arange(start=0, end=max_sequence_len, dtype=torch.float32, device=device).unsqueeze(dim=1).expand(max_sequence_len, d_model)
+    pos_den = torch.arange(start=0, end=d_model, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    pos_den = torch.pow(10000,(2*torch.floor((pos_den)/2))/d_model)
     pos_val = pos_num/pos_den
-    sin_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == float(1)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
-    cos_mask = (torch.arange(start=1, end=d_model+1, dtype=torch.float32, device=device)%2 == float(0)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    sin_mask = (torch.arange(start=0, end=d_model, dtype=torch.float32, device=device)%2 == float(0)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
+    cos_mask = (torch.arange(start=0, end=d_model, dtype=torch.float32, device=device)%2 == float(1)).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_embed = torch.zeros(max_sequence_len, d_model, dtype=torch.float32, device=device)
     pos_embed[sin_mask] = torch.sin(pos_val[sin_mask])
     pos_embed[cos_mask] = torch.cos(pos_val[cos_mask])
     return pos_embed
-    
 
 class LanguageModel(nn.Module):
     """
@@ -43,6 +44,7 @@ class LanguageModel(nn.Module):
         """
         self.config = config
         super().__init__()
+        set_device()
         # 1. Input embeddings
         self.embed = nn.Embedding(self.config["vocab_size"], self.config["d_model"])
         # 2. Positional Encoding
@@ -58,11 +60,10 @@ class LanguageModel(nn.Module):
         for layer in range(1, self.config['n_layers']+1):
             # a. LayerNorm(X(l-1))
             self.layer_norm[f'{layer}_1'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
-            # b. Multi-Head Attention
-            for head in range(1, self.config['n_heads']+1):
-                self.query[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
-                self.key[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
-                self.value[f'{layer}_{head}'] = nn.Linear(self.config['d_model'], self.config['d_head'], bias=False)
+            # b. Multi-Head Attention -> Optimized by combining heads
+            self.query[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
+            self.key[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
+            self.value[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
             # Handle in forward
@@ -71,7 +72,7 @@ class LanguageModel(nn.Module):
             # e. UpProjection
             self.up_proj[f'{layer}'] = nn.Linear(self.config['d_model'], 4*self.config['d_model'], bias=True)
             # f. Non-linearity
-            self.activation = nn.GELU()
+            # self.activation = nn.GELU()
             # g. DownProjection
             self.down_proj[f'{layer}'] = nn.Linear(4*self.config['d_model'], self.config['d_model'], bias=True)
             # h. Residual Connection: X(l) = Xnet(l-1) + Z2(l)
@@ -99,11 +100,17 @@ class LanguageModel(nn.Module):
             for layer in range(1, self.config['n_layers']+1):
                 state_dict[f'layer_norm.{layer}_1.weight'] = weights[f'gamma_{layer}_1']
                 state_dict[f'layer_norm.{layer}_1.bias'] = weights[f'beta_{layer}_1']
+                query_weights = []
+                key_weights = []
+                value_weights = []
                 for head in range(1, self.config['n_heads']+1):
-                    state_dict[f'query.{layer}_{head}.weight'] = weights[f'W_{layer}_Q_{head}']
-                    state_dict[f'key.{layer}_{head}.weight'] = weights[f'W_{layer}_K_{head}']
-                    state_dict[f'value.{layer}_{head}.weight'] = weights[f'W_{layer}_V_{head}']
-                state_dict[f'output.{layer}.weight'] = weights[f'W_{layer}_O']
+                    query_weights.append(weights[f'W_{layer}_Q_{head}'].t())
+                    key_weights.append(weights[f'W_{layer}_K_{head}'].t())
+                    value_weights.append(weights[f'W_{layer}_V_{head}'].t())
+                state_dict[f'query.{layer}.weight'] = torch.cat(query_weights, dim=1)
+                state_dict[f'key.{layer}.weight'] = torch.cat(key_weights, dim=1)
+                state_dict[f'value.{layer}.weight'] = torch.cat(value_weights, dim=1)
+                state_dict[f'output.{layer}.weight'] = weights[f'W_{layer}_O'].t()
                 state_dict[f'layer_norm.{layer}_2.weight'] = weights[f'gamma_{layer}_2']
                 state_dict[f'layer_norm.{layer}_2.bias'] = weights[f'beta_{layer}_2']
                 state_dict[f'up_proj.{layer}.weight'] = weights[f'W_{layer}_up'].t()
@@ -129,47 +136,48 @@ class LanguageModel(nn.Module):
             - A tensor of shape (batch_size, sequence_len, vocab_size) containing the logits for each token in the vocabulary.
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
-        global device, max_sequence_len
-        x_0 = self.embed(input_ids) + self.pos_embed.unsqueeze(dim=0).expand(input_ids.shape[0], -1, -1)
+        global device
+        batch_size = input_ids.shape[0]
+        token_length = input_ids.shape[1]
+        n_heads = self.config['n_heads']
+        d_head = self.config['d_head']
+        d_model = self.config['d_model']
+        idx = torch.arange(token_length, device=input_ids.device)
+        causal_mask = (idx.unsqueeze(0) <= idx.unsqueeze(1)).unsqueeze(0)
+        attn_mask = attention_mask.bool().unsqueeze(1)
+        mask = causal_mask & attn_mask
+        x_0 = self.embed(input_ids) + self.pos_embed[:token_length].unsqueeze(0)
         x_lp = x_0
         for layer in range(1, self.config['n_layers']+1):
             # Core attention block
             x_lp_norm = self.layer_norm[f'{layer}_1'](x_lp)
-            query_embed = {}
-            key_embed = {}
-            val_embed = {}
-            score = {}
-            final_embed = []
-            # ToDo optimization: parallelize the for loops and compute Q, K, V in parallel on GPU
-            for head in range(1, self.config['n_heads']+1):
-                query_embed[head] = self.query[f'{layer}_{head}'](x_lp_norm)
-                key_embed[head] = self.key[f'{layer}_{head}'](x_lp_norm)
-                val_embed[head] = self.value[f'{layer}_{head}'](x_lp_norm)
-
-                score[head] = (query_embed[head] @ key_embed[head].transpose(1, 2))/np.sqrt(self.config["d_head"])
-                if self.config['mode'] == "tanh-clipped":
-                    score[head] = self.config['tau'] * nn.Tanh(score[head])
-                # Causal attention + Use Attention masks
-                index = torch.arange(max_sequence_len, device=device)
-                causal_mask = (index.unsqueeze(0) <= index.unsqueeze(1)).unsqueeze(0)
-                att_mask = attention_mask.bool().unsqueeze(1)
-                score[head] = score[head].masked_fill(~att_mask, float("-inf"))
-                score[head] = score[head].masked_fill(~causal_mask, float("-inf"))
-                score[head] = F.softmax(score[head], dim=2)
-                final_embed.append(score[head] @ val_embed[head])
-            z1 = self.output[f'{layer}'](torch.cat(final_embed, dim=2))
+            query_embed = self.query[f'{layer}'](x_lp_norm)
+            key_embed = self.key[f'{layer}'](x_lp_norm)
+            value_embed = self.value[f'{layer}'](x_lp_norm)
+            query_embed = query_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
+            key_embed = key_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
+            value_embed = value_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
+            score = (query_embed @ key_embed.transpose(2, 3))/np.sqrt(d_head)
+            if self.config['mode'] == "tanh-clipped":
+                score = self.config['tau'] * F.tanh(score)
+            # Causal attention + Use Attention masks
+            score.masked_fill_(~mask.unsqueeze(1), float("-inf"))
+            score = F.softmax(score, dim=3)
+            z1 = score @ value_embed
+            z1 = z1.transpose(1,2).contiguous()
+            z1 = z1.view(batch_size, token_length, d_model)
+            z1 = self.output[f'{layer}'](z1)
             x_lp = x_lp + z1
             # Feedforward network
             x_lp_norm = self.layer_norm[f'{layer}_2'](x_lp)
             x_lp_norm = self.up_proj[f'{layer}'](x_lp_norm)
-            x_lp_norm = self.activation(x_lp_norm)
+            x_lp_norm = F.gelu(x_lp_norm)
             z2 = self.down_proj[f'{layer}'](x_lp_norm)
             xl = x_lp + z2
             x_lp = xl
             
         output = self.layer_norm['final'](x_lp)
         logits = self.logits(output)
-        # breakpoint()
         return logits
         
         # raise NotImplementedError("Implement forward as described in assignment document")
@@ -201,17 +209,11 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     global device, max_sequence_len
     input_list = batch['input_ids']
     mask_list = batch['attention_mask']
-    len = input_list[0].size()[0]
-    pad_len = max_sequence_len - len
-    input_list[0] = F.pad(input_list[0], (0, pad_len), value=PAD_ID)
-    mask_list[0] = F.pad(mask_list[0], (0, pad_len), value=0)
     padded_input = pad_sequence(input_list, batch_first=True, padding_value=PAD_ID)
     padded_mask = pad_sequence(mask_list, batch_first=True, padding_value=0)
     padded_batch = {}
     padded_batch['input_ids'] = padded_input
     padded_batch['attention_mask'] = padded_mask
-    input_list[0] = input_list[0][:len]
-    mask_list[0] = mask_list[0][:len]
     return padded_batch
 
     # raise NotImplementedError("Implement collate_fn as described in assignment document")
