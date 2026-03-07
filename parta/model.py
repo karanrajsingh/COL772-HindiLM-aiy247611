@@ -4,23 +4,19 @@ from typing import Any, Dict, List
 from torch.nn.utils.rnn import pad_sequence
 from torch.nn import functional as F
 import numpy as np
-import math
-
 
 max_sequence_len = 512
 device = None
 
 def set_device():
     global device
-    # if torch.cuda.is_available():
-    #     device = torch.device("cuda:1")
-    # else:
-    #     device = torch.device("cpu")
-    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")   
 
 def get_positional_embeddings(d_model):
     global device, max_sequence_len
-    set_device()
     pos_num = torch.arange(start=0, end=max_sequence_len, dtype=torch.float32, device=device).unsqueeze(dim=1).expand(max_sequence_len, d_model)
     pos_den = torch.arange(start=0, end=d_model, dtype=torch.float32, device=device).unsqueeze(dim=0).expand(max_sequence_len, d_model)
     pos_den = torch.pow(10000,(2*torch.floor((pos_den)/2))/d_model)
@@ -94,6 +90,7 @@ class LanguageModel(nn.Module):
         """
         # raise NotImplementedError("Implement set_weights as described in assignment document")
         # As per assignment, no transpose where pre-multiplication is done, and transpose where post-multiplication is done.
+
         with torch.no_grad():
             state_dict = {}
             state_dict['embed.weight'] = weights['W_vocab'].t()
@@ -120,6 +117,7 @@ class LanguageModel(nn.Module):
             state_dict['layer_norm.final.weight'] = weights['gamma_final']  
             state_dict['layer_norm.final.bias'] = weights['beta_final']
             state_dict['logits.weight'] = weights['W_devocab'].t()
+            
             self.load_state_dict(state_dict)
 
 
@@ -137,12 +135,14 @@ class LanguageModel(nn.Module):
             Logits are the raw, unnormalized scores output by the model, which can be converted to probabilities using a softmax function.
         """
         global device
+        input_ids = input_ids.to(device)
+        attention_mask = attention_mask.to(device)
         batch_size = input_ids.shape[0]
         token_length = input_ids.shape[1]
         n_heads = self.config['n_heads']
         d_head = self.config['d_head']
         d_model = self.config['d_model']
-        idx = torch.arange(token_length, device=input_ids.device)
+        idx = torch.arange(token_length, device=device)
         causal_mask = (idx.unsqueeze(0) <= idx.unsqueeze(1)).unsqueeze(0)
         attn_mask = attention_mask.bool().unsqueeze(1)
         mask = causal_mask & attn_mask
@@ -195,6 +195,7 @@ def load_model(config: Dict[str, Any], weights: Dict[str, Any]):
 
     model = LanguageModel(config)
     model.set_weights(weights)
+    model.to(device)
     return model
 
 
@@ -206,11 +207,11 @@ def collate_fn(batch: Dict[str, List[torch.tensor]]) -> Dict[str, torch.Tensor]:
     """
     PAD_ID = 0  # Assume 0 is the padding token ID
 
-    global device, max_sequence_len
+    global device
     input_list = batch['input_ids']
     mask_list = batch['attention_mask']
-    padded_input = pad_sequence(input_list, batch_first=True, padding_value=PAD_ID)
-    padded_mask = pad_sequence(mask_list, batch_first=True, padding_value=0)
+    padded_input = pad_sequence(input_list, batch_first=True, padding_value=PAD_ID).to(device)
+    padded_mask = pad_sequence(mask_list, batch_first=True, padding_value=0).to(device)
     padded_batch = {}
     padded_batch['input_ids'] = padded_input
     padded_batch['attention_mask'] = padded_mask
