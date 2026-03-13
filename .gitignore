@@ -209,3 +209,5 @@ __marimo__/
 
 # Added by karanrajsingh
 parta/data/
+run_parta.sh
+run_partb.sh
