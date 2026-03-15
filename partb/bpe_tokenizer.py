@@ -77,7 +77,7 @@ class BPETokenizer:
         # convert to tokens
         word_tokens_freq = {}
         for word, freq in word_freq.items():
-            word_tokens_freq[tuple(self.encode(word))] = freq
+            word_tokens_freq[tuple(self.initial_tokenize(word))] = freq
 
         print(f"Vocab_size: {len(self.vocab)}")
 
@@ -129,12 +129,19 @@ class BPETokenizer:
         #             breakpoint()
 
 
-            
-    def encode(self, text):
-
+    def initial_tokenize(self, text):
         token_ids = [None]*len(text)
         for index, char in enumerate(list(text)):
             token_ids[index] = self.tokens_to_integers.get(char, self.get_unk_id())
+        return token_ids
+
+            
+    def encode(self, text, add_sos_eos=False):
+
+        # token_ids = [None]*len(text)
+        # for index, char in enumerate(list(text)):
+        #     token_ids[index] = self.tokens_to_integers.get(char, self.get_unk_id())
+        token_ids = self.initial_tokenize(text)
         
         
         for merge in self.merges:
@@ -148,6 +155,9 @@ class BPETokenizer:
                     token_ids.pop(i+1)
                 else:
                     i += 1
+        if add_sos_eos:
+            token_ids = [self.get_sos_id()] + token_ids + [self.get_eos_id()]
+
         return token_ids
 
     def decode(self, token_ids):
@@ -156,6 +166,8 @@ class BPETokenizer:
             i=0
             while i < len(token_ids)-1:
                 # breakpoint()
+                # if token_ids in [self.get_pad_id(), self.get_unk_id(), self.get_sos_id(), self.get_eos_id()]:
+                #     i += 1
                 if merge == (token_ids[i], token_ids[i+1]):
                     merged_token = self.integers_to_tokens[merge[0]] + self.integers_to_tokens[merge[1]]
                     merged_id = self.tokens_to_integers[merged_token]
@@ -165,11 +177,15 @@ class BPETokenizer:
                 else:
                     i += 1
         # breakpoint()
-        text_list = [None] * len(token_ids)
+        # text_list = [None] * len(token_ids)
+        text_list = []
         for index, token_index in enumerate(token_ids):
             # breakpoint()
             # text_list[index] = self.integers_to_tokens[str(token_index)]
-            text_list[index] = self.integers_to_tokens[token_index]
+            if token_index in [self.get_pad_id(), self.get_unk_id(), self.get_sos_id(), self.get_eos_id()]:
+                continue
+            text_list.append(self.integers_to_tokens[token_index])
+        # breakpoint()
         text = "".join(text_list)
         return text
 
