@@ -90,6 +90,10 @@ class BPETokenizer:
                     pair = (word_tokens[i], word_tokens[i+1])
                     pairs[pair] = pairs.get(pair, 0) + freq
 
+            if not pairs:
+                print("No more pairs available for merging.")
+                break
+
             best_pair = max(pairs, key=pairs.get)
             self.merges.append(best_pair)
 
@@ -112,7 +116,8 @@ class BPETokenizer:
                     else:
                         i += 1
                 merged_word_tokens = tuple(word_tokens_list)       
-                merged_word_tokens_freq[merged_word_tokens] = freq
+                # merged_word_tokens_freq[merged_word_tokens] = freq
+                merged_word_tokens_freq[merged_word_tokens] = merged_word_tokens_freq.get(merged_word_tokens, 0) + freq
             word_tokens_freq = merged_word_tokens_freq
                 
 
