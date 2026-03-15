@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 class BPETokenizer:
     def __init__(self, vocab_size=1000, special_tokens=None):
@@ -9,6 +10,10 @@ class BPETokenizer:
         self.tokens_to_integers = {}
         self.integers_to_tokens = {}
         self.merges = []
+        if special_tokens is not None:
+            self.special_tokens = special_tokens
+        else:
+            self.special_tokens = ["<PAD>", "<UNK>", "<SOS>", "<EOS>"]
 
     def train(self, corpus):
         # 1. Initialize vocabulary
@@ -20,27 +25,59 @@ class BPETokenizer:
         self.integers_to_tokens[self.get_sos_id()] = "<SOS>"
         self.tokens_to_integers["<EOS>"] = self.get_eos_id()
         self.integers_to_tokens[self.get_eos_id()] = "<EOS>"
+        for special_token in self.special_tokens:
+            if special_token not in ["<PAD>", "<UNK>", "<SOS>", "<EOS>"]:
+                self.tokens_to_integers[special_token] = len(self.tokens_to_integers)
+                self.integers_to_tokens[len(self.tokens_to_integers)] = special_token
+        
+
         #2. Create a character level vocab, extracting unique characters from training corpus.
         # Add code to handle unknown variables later, like 
         # english alphabets
         # Hindi unicode: U+0900 to U+097F
         # Numbers in hindi and english
-        char_list = []
-        # Can this be efficient?
+
+        word_freq = {}
+        words_spaced = []
+        # parallel
         for sentence in corpus:
-            char_list.extend(list(sentence))
+            sentence_words = re.findall(r'\S+|\s+', sentence)
+            for word in sentence_words: # not parallel
+                if word.isspace():
+                    words_spaced[-1] += word
+                else:
+                    words_spaced.append(word)
+        
+        for word in words_spaced:
+            word_freq[word] = word_freq.get(word, 0) + 1
+
+        #         breakpoint()
+        #     breakpoint()
+        # breakpoint()
+        
+        char_list = []
+        for word in word_freq.keys():
+            char_list.extend(list(word))
+            # breakpoint()
         self.vocab = set(char_list)
-        # corpus_str = "".join(char_list)
+
+        
+        # # Can this be efficient?
+        # for sentence in corpus:
+        #     char_list.extend(list(sentence))
+        # self.vocab = set(char_list)
+        # # corpus_str = "".join(char_list)
 
         # Parallelize loop later
+        offset = len(self.tokens_to_integers)
         for index, char in enumerate(self.vocab):
-            self.tokens_to_integers[char] = index + 4
-            self.integers_to_tokens[index + 4] = char
+            self.tokens_to_integers[char] = index + offset
+            self.integers_to_tokens[index + offset] = char
 
         # convert to tokens
-        corpus_tokens = []
-        for sentence in corpus:
-            corpus_tokens.append(self.encode(sentence))
+        word_tokens_freq = {}
+        for word, freq in word_freq.items():
+            word_tokens_freq[tuple(self.encode(word))] = freq
 
         print(f"Vocab_size: {len(self.vocab)}")
 
@@ -48,21 +85,10 @@ class BPETokenizer:
             # Build pairs, optimize for time later:
             
             pairs = {}
-            for sentence_tokens in corpus_tokens:
-                for i in range(len(sentence_tokens)-1):
-                    # pair = self.integers_to_tokens[sentence_tokens[i]] + self.integers_to_tokens[sentence_tokens[i+1]]
-                    pair = (sentence_tokens[i], sentence_tokens[i+1])
-                    pairs.setdefault(pair, 0)
-                    # if pairs.get(pair) is None:
-                    #     pairs[pair] = 0
-
-        # Update pair counts -> Don't make Parallel, else race condition
-            for sentence_tokens in corpus_tokens:
-                for i in range(len(sentence_tokens)-1):
-                    # pair = self.integers_to_tokens[sentence_tokens[i]] + self.integers_to_tokens[sentence_tokens[i+1]]
-                    pair = (sentence_tokens[i], sentence_tokens[i+1])
-                    pairs[pair] += 1
-
+            for word_tokens, freq in word_tokens_freq.items(): # should not make parallel, else race condition
+                for i in range(len(word_tokens)-1):
+                    pair = (word_tokens[i], word_tokens[i+1])
+                    pairs[pair] = pairs.get(pair, 0) + freq
 
             best_pair = max(pairs, key=pairs.get)
             self.merges.append(best_pair)
@@ -74,16 +100,21 @@ class BPETokenizer:
             self.integers_to_tokens[best_pair_id] = best_pair_token
 
             # Update tokens
-            for sentence_tokens in corpus_tokens:
+            merged_word_tokens_freq = {}
+            for word_tokens, freq in word_tokens_freq.items():
+                word_tokens_list = list(word_tokens)
                 i=0
-                while i < len(sentence_tokens)-1:
-                    # pair = self.integers_to_tokens[sentence_tokens[i]] + self.integers_to_tokens[sentence_tokens[i+1]]
-                    pair = (sentence_tokens[i], sentence_tokens[i+1])
+                while i < len(word_tokens_list)-1:
+                    pair = (word_tokens_list[i], word_tokens_list[i+1])
                     if pair == best_pair:
-                        sentence_tokens[i] = best_pair_id
-                        sentence_tokens.pop(i+1)
+                        word_tokens_list[i] = best_pair_id
+                        word_tokens_list.pop(i+1)
                     else:
                         i += 1
+                merged_word_tokens = tuple(word_tokens_list)       
+                merged_word_tokens_freq[merged_word_tokens] = freq
+            word_tokens_freq = merged_word_tokens_freq
+                
 
             print(f"Vocab_size: {len(self.vocab)}")
             # breakpoint()
@@ -103,7 +134,7 @@ class BPETokenizer:
 
         token_ids = [None]*len(text)
         for index, char in enumerate(list(text)):
-            token_ids[index] = self.tokens_to_integers[char]
+            token_ids[index] = self.tokens_to_integers.get(char, self.get_unk_id())
         
         
         for merge in self.merges:
@@ -128,7 +159,7 @@ class BPETokenizer:
                 if merge == (token_ids[i], token_ids[i+1]):
                     merged_token = self.integers_to_tokens[merge[0]] + self.integers_to_tokens[merge[1]]
                     merged_id = self.tokens_to_integers[merged_token]
-                    breakpoint()
+                    # breakpoint()
                     token_ids[i] = merged_id
                     token_ids.pop(i+1)
                 else:
