@@ -280,16 +280,20 @@ class BPETokenizer:
         # raise NotImplementedError("Save method not implemented yet.")
 
     def load(self, filepath):
-        # raise NotImplementedError("Load method not implemented yet.")
-        with open(filepath, 'r', encoding='utf-8') as f:
-            tokenizer_dict = json.load(f)
-        self.tokens_to_integers = tokenizer_dict["tokens_to_integers"]
-        for key, value in tokenizer_dict["integers_to_tokens"].items():
-            self.integers_to_tokens[int(key)] = value
-        # self.integers_to_tokens = tokenizer_dict["integers_to_tokens"]
-        for pair in tokenizer_dict["merges"]:
-            self.merges.append(tuple(pair))
-        # self.merges = tokenizer_dict["merges"]
+
+        if os.path.isdir(filepath):
+            filepath = os.path.join(filepath, "my_bpe.json")
+
+            # raise NotImplementedError("Load method not implemented yet.")
+            with open(filepath, 'r', encoding='utf-8') as f:
+                tokenizer_dict = json.load(f)
+            self.tokens_to_integers = tokenizer_dict["tokens_to_integers"]
+            for key, value in tokenizer_dict["integers_to_tokens"].items():
+                self.integers_to_tokens[int(key)] = value
+            # self.integers_to_tokens = tokenizer_dict["integers_to_tokens"]
+            for pair in tokenizer_dict["merges"]:
+                self.merges.append(tuple(pair))
+            # self.merges = tokenizer_dict["merges"]
 
     
     def get_vocab_size(self):
