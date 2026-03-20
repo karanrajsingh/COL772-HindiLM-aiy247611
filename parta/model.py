@@ -11,7 +11,7 @@ device = None
 def set_device():
     global device
     if torch.cuda.is_available():
-        device = torch.device("cuda")
+        device = torch.device("cuda:1")
     else:
         device = torch.device("cpu")   
 
@@ -143,9 +143,10 @@ class LanguageModel(nn.Module):
         d_head = self.config['d_head']
         d_model = self.config['d_model']
         idx = torch.arange(token_length, device=device)
-        causal_mask = (idx.unsqueeze(0) <= idx.unsqueeze(1)).unsqueeze(0)
+        # causal_mask = (idx.unsqueeze(0) <= idx.unsqueeze(1)).unsqueeze(0)
         attn_mask = attention_mask.bool().unsqueeze(1)
-        mask = causal_mask & attn_mask
+        # mask = causal_mask & attn_mask
+        mask = attn_mask
         x_0 = self.embed(input_ids) + self.pos_embed[:token_length].unsqueeze(0)
         x_lp = x_0
         for layer in range(1, self.config['n_layers']+1):
