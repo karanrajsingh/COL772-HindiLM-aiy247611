@@ -2,14 +2,7 @@
 # If you wish to change their code, please do so in their respective files under parta/ and partb/ directories.
 from partb.bpe_tokenizer import BPETokenizer
 from parta.model import LanguageModel, collate_fn
-
-# You can also create additional files in this directory and import them here if needed.
-# For example, the line below import a dummy function from utils.py file.
-from .utils import dummy_function  # Replace with actual utility functions as needed
-
-# You can structure your code as you see fit as long as the CLI works as specified.
-# Finally, treat this as your FINAL MODEL TRAINING SCRIPT. Do not perform hyperparameter tuning here.
-# You can create separate scripts for hyperparameter tuning if needed.
+from .utils import dummy_function 
 
 import torch
 import os
@@ -81,324 +74,6 @@ def evaluate_perplexity(model, dataloader, device, tokenizer, pad_token_id=0):
         "total_tokens": total_valid_tokens
     }
 
-
-# def evaluate_perplexity(model, dataloader, device, pad_token_id=0):
-#     """
-#     Complete evaluation loop: computes mean BPC and perplexity over entire dataset.
-    
-#     Args:
-#     - model: your trained causal LM
-#     - dataloader: validation/test DataLoader 
-#     - device: torch.device('cuda') or 'cpu'
-#     - pad_token_id: your tokenizer.pad_token_id
-    
-#     Returns: dict with final metrics
-#     """
-#     model.eval()
-#     total_nll = 0.0
-#     total_tokens = 0
-    
-#     with torch.no_grad():
-#         for batch in dataloader:
-#             # Standard DataLoader batch format
-#             input_ids = batch["input_ids"].to(device)
-#             attention_mask = batch["attention_mask"].to(device)
-            
-#             # Forward pass
-#             logits = model(input_ids, attention_mask)  # (B, S, V)
-            
-#             B, S, V = logits.shape
-            
-#             # Align for next-token prediction
-#             shift_labels = input_ids[:, 1:]
-#             logits_for_ppl = logits[:, :-1, :]
-            
-#             # Log probs for true tokens (natural log)
-#             log_probs = F.log_softmax(logits_for_ppl, dim=-1)
-#             gathered_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-            
-#             # Use attention_mask for precise padding (better than pad_token_id)
-#             shift_mask = attention_mask[:, 1:]
-#             nll_batch = -gathered_log_probs * shift_mask
-#             valid_tokens_batch = shift_mask.sum().item()
-            
-#             # Accumulate global statistics
-#             total_nll += nll_batch.sum().item()
-#             total_tokens += valid_tokens_batch
-    
-#     # Final dataset-level metrics
-#     avg_nll_per_token = total_nll / total_tokens if total_tokens > 0 else float('inf')
-#     bpc = avg_nll_per_token / math.log(2)
-#     perplexity = math.exp(avg_nll_per_token)
-    
-#     return {
-#         "bpc": bpc,
-#         "perplexity": perplexity,
-#         "total_tokens": total_tokens
-#     }
-
-
-# def bits_per_character(batch_data, logits):
-#     """
-#     Handles DataLoader dict format: [{'input_ids': tensor, ...}, ...]
-#     """
-#     # Extract input_ids from dicts/list
-#     if isinstance(batch_data, list) and len(batch_data) > 0:
-#         if isinstance(batch_data[0], dict):
-#             # DataLoader format: list of dicts
-#             input_ids_list = [item['input_ids'] for item in batch_data]
-#         else:
-#             # List of tensors
-#             input_ids_list = batch_data
-#     else:
-#         # Already a tensor
-#         input_ids_list = batch_data
-    
-#     # Stack into batch tensor
-#     input_ids = torch.stack(input_ids_list)
-    
-#     B, S, V = logits.shape
-    
-#     # Rest unchanged...
-#     shift_labels = input_ids[:, 1:]
-#     logits_for_ppl = logits[:, :-1, :]
-    
-#     log_probs = F.log_softmax(logits_for_ppl, dim=-1)
-#     gathered_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-    
-#     pad_token_id = 0  # Set your pad token ID
-#     mask = (shift_labels != pad_token_id).float()
-    
-#     nll = -gathered_log_probs * mask
-#     total_nll = nll.sum()
-#     total_tokens = mask.sum() + 1e-8
-#     avg_nll_per_token = total_nll / total_tokens
-    
-#     bpc = avg_nll_per_token / math.log(2)
-#     perplexity = torch.exp(avg_nll_per_token)
-    
-#     return {
-#         "bpc": bpc.item(),
-#         "perplexity": perplexity.item()
-#     }
-
-
-
-# def compute_perplexity(model, dataloader, device, pad_token_id=0):
-
-#     model.eval()
-
-#     total_loss = 0.0
-#     total_tokens = 0
-
-#     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_token_id, reduction='sum')
-
-#     with torch.no_grad():
-#         for batch in dataloader:
-
-#             input_ids = batch["input_ids"].to(device)
-#             attention_mask = batch["attention_mask"].to(device)
-
-#             logits = model(input_ids, attention_mask)
-
-#             # 🔹 Create shifted labels
-#             labels = input_ids.clone()
-#             labels[:, :-1] = input_ids[:, 1:]
-#             labels[:, -1] = pad_token_id
-
-#             B, T, V = logits.shape
-
-#             logits = logits.view(B * T, V)
-#             labels = labels.view(B * T)
-
-#             # 🔹 Sum loss over all tokens
-#             loss = loss_fn(logits, labels)
-
-#             total_loss += loss.item()
-
-#             # 🔹 Count valid (non-pad) tokens
-#             valid_tokens = (labels != pad_token_id).sum().item()
-#             total_tokens += valid_tokens
-
-#     # 🔹 Average loss per token
-#     avg_loss = total_loss / total_tokens
-
-#     # 🔹 Perplexity
-#     perplexity = math.exp(avg_loss)
-
-#     return perplexity
-
-# import torch
-# import torch.nn.functional as F
-
-# import torch
-# import torch.nn.functional as F
-# import math
-
-# def bits_per_character(input_ids, logits):
-#     """
-#     Calculate Bits Per Character (BPC) from input_ids and logits.
-    
-#     BPC = log2(perplexity) = (ln(perplexity)) / ln(2)
-    
-#     Returns: float (bits per character)
-#     """
-#     B, S, V = logits.shape
-    
-#     # Align for next-token prediction
-#     shift_labels = input_ids[:, 1:]
-#     logits_for_ppl = logits[:, :-1, :]
-    
-#     # Log probs for true next tokens (natural log)
-#     log_probs = F.log_softmax(logits_for_ppl, dim=-1)  # ln(P)
-#     gathered_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-    
-#     # Mask pads (adjust pad_token_id if needed)
-#     pad_token_id = 0
-#     mask = (shift_labels != pad_token_id).float()
-    
-#     # Average negative log likelihood (nats per token)
-#     nll = -gathered_log_probs * mask
-#     total_nll = nll.sum()
-#     total_tokens = mask.sum() + 1e-8
-#     avg_nll_per_token = total_nll / total_tokens  # L̄ (nats/token)
-    
-#     # Perplexity first (optional intermediate)
-#     perplexity = torch.exp(avg_nll_per_token)
-    
-#     # BPC = log2(perplexity) = ln(perplexity)/ln(2)
-#     bpc = avg_nll_per_token / math.log(2)  # Directly from nats to bits
-    
-#     return {
-#         "bpc": bpc.item(),
-#         "perplexity": perplexity.item(),
-#         "nats_per_token": avg_nll_per_token.item()
-#     }
-
-# import torch
-# import torch.nn.functional as F
-# import math
-
-# def bits_per_character(input_ids_list, logits):
-#     """
-#     Fixed: Handles list of tensors (batched padded inputs)
-#     """
-#     # Convert list → tensor if needed
-#     if isinstance(input_ids_list, list):
-#         input_ids = torch.stack(input_ids_list)  # List of (S,) → (B, S)
-#     else:
-#         input_ids = input_ids_list
-    
-#     B, S, V = logits.shape
-    
-#     # Align for next-token prediction
-#     shift_labels = input_ids[:, 1:]
-#     logits_for_ppl = logits[:, :-1, :]
-    
-#     # Log probs (natural log)
-#     log_probs = F.log_softmax(logits_for_ppl, dim=-1)
-#     gathered_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-    
-#     # Mask pads (YOUR pad token ID)
-#     pad_token_id = 0  # CHANGE THIS to your tokenizer.pad_token_id
-#     mask = (shift_labels != pad_token_id).float()
-    
-#     # Global average NLL (nats per token)
-#     nll = -gathered_log_probs * mask
-#     total_nll = nll.sum()
-#     total_tokens = mask.sum() + 1e-8
-#     avg_nll_per_token = total_nll / total_tokens
-    
-#     # BPC and PPL
-#     bpc = avg_nll_per_token / math.log(2)
-#     perplexity = torch.exp(avg_nll_per_token)
-    
-#     return {
-#         "bpc": bpc.item(),
-#         "perplexity": perplexity.item()
-#     }
-
-# def mean_perplexity(input_ids, logits):
-#     """
-#     Returns ONLY mean perplexity from input_ids and logits.
-    
-#     Args:
-#     - input_ids: torch.LongTensor (B, S)
-#     - logits: torch.FloatTensor (B, S, V)
-    
-#     Returns:
-#     - float: mean perplexity across batch
-#     """
-#     B, S, V = logits.shape
-    
-#     # Align: logits[:-1] predict input_ids[1:]
-#     shift_labels = input_ids[:, 1:]
-#     logits_for_ppl = logits[:, :-1, :]
-    
-#     # Log probs for true next tokens
-#     log_probs = F.log_softmax(logits_for_ppl, dim=-1)
-#     gathered_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
-    
-#     # Mask pads (assuming 0 is pad token)
-#     pad_token_id = 0
-#     mask = (shift_labels != pad_token_id).float()
-    
-#     # Mean negative log likelihood
-#     nll = -gathered_log_probs * mask
-#     token_counts = mask.sum(dim=-1) + 1e-8
-#     mean_nll = nll.sum() / token_counts.sum()  # Global mean
-    
-#     return torch.exp(mean_nll).item()
-
-
-# def compute_bpc(model, dataloader, device, pad_token_id=0):
-
-#     model.eval()
-
-#     total_loss = 0.0        # sum of NLL (in nats)
-#     total_chars = 0         # total characters
-
-#     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_token_id, reduction='sum')
-
-#     with torch.no_grad():
-#         for batch in dataloader:
-
-#             input_ids = batch["input_ids"].to(device)
-#             attention_mask = batch["attention_mask"].to(device)
-
-#             logits = model(input_ids, attention_mask)
-
-#             # 🔹 Create shifted labels
-#             labels = input_ids.clone()
-#             labels[:, :-1] = input_ids[:, 1:]
-#             labels[:, -1] = pad_token_id
-
-#             B, T, V = logits.shape
-
-#             logits = logits.view(B * T, V)
-#             labels = labels.view(B * T)
-
-#             # 🔹 Sum loss (not mean!)
-#             loss = loss_fn(logits, labels)
-
-#             total_loss += loss.item()
-
-#             # 🔹 Count characters (IMPORTANT)
-#             # You must store original text OR approximate from tokenizer
-#             # If using BPE → sum lengths of decoded tokens
-#             for seq in input_ids:
-#                 # remove padding
-#                 seq = seq[seq != pad_token_id]
-
-#                 # approximate characters via decoding
-#                 text = tokenizer.decode(seq.tolist())
-#                 total_chars += len(text)
-
-#     # 🔹 Final BPC
-#     bpc = total_loss / (total_chars * math.log(2))
-
-#     return bpc
-
 def compute_loss(logits, input_ids, pad_id=0):
     
     labels = input_ids.clone()
@@ -465,7 +140,7 @@ def main(args):
 
     global device
     if torch.cuda.is_available():
-        device = "cuda:1"
+        device = "cuda"
     else:
         device = "cpu"
 
@@ -473,7 +148,7 @@ def main(args):
 
     t1 = time.time()
     global tokenizer
-    tokenizer = BPETokenizer()
+    tokenizer = BPETokenizer(vocab_size=config['vocab_size'])
     tokenizer.load(args.tokenizer_path)
     t2 = time.time()
     print(f"Tokenizer loaded from {args.tokenizer_path} in {t2-t1} seconds.")
@@ -528,6 +203,7 @@ def main(args):
     T2 = time.time()
     print(f"Data pre-processed in {T2-T1} seconds")
 
+    # model = LanguageModelEncoder(config=config).to(device)
     model = LanguageModel(config=config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     epochs = 1000
@@ -582,6 +258,7 @@ def main(args):
 
     # val_ppl = compute_perplexity(model, valid_batches_padded, device)
     # print(f"Validation Perplexity: {val_ppl:.4f}")
+    model = LanguageModel(config=config).to(device)
     model.load_state_dict(torch.load(os.path.join(args.output_model_path, "model.pt")))
     model.eval()
     model.to(device)
