@@ -8,6 +8,34 @@ import numpy as np
 max_sequence_len = 512
 device = None
 
+def apply_rope(q, k):
+    # q, k: (B, heads, T, head_dim)
+    B, H, T, D = q.shape
+    
+    assert D % 2 == 0, "head_dim must be even for RoPE"
+
+    # Create frequencies
+    theta = 10000 ** (-torch.arange(0, D, 2, device=q.device).float() / D)
+    pos = torch.arange(T, device=q.device).float()
+
+    freqs = torch.outer(pos, theta)  # (T, D/2)
+
+    cos = freqs.cos()[None, None, :, :]  # (1,1,T,D/2)
+    sin = freqs.sin()[None, None, :, :]  # (1,1,T,D/2)
+
+    # Split into even/odd
+    q1, q2 = q[..., ::2], q[..., 1::2]
+    k1, k2 = k[..., ::2], k[..., 1::2]
+
+    # Apply rotation
+    q_rot = torch.cat([q1 * cos - q2 * sin,
+                       q1 * sin + q2 * cos], dim=-1)
+
+    k_rot = torch.cat([k1 * cos - k2 * sin,
+                       k1 * sin + k2 * cos], dim=-1)
+
+    return q_rot, k_rot
+
 def set_device():
     global device
     if torch.cuda.is_available():
@@ -53,31 +81,41 @@ class LanguageModel(nn.Module):
         self.output = nn.ModuleDict()
         self.up_proj = nn.ModuleDict()
         self.down_proj = nn.ModuleDict()
+        self.gate_proj = nn.ModuleDict()
         for layer in range(1, self.config['n_layers']+1):
             # a. LayerNorm(X(l-1))
-            self.layer_norm[f'{layer}_1'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            # self.layer_norm[f'{layer}_1'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            self.layer_norm[f'{layer}_1'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # b. Multi-Head Attention -> Optimized by combining heads
             self.query[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.key[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.value[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
+            # self.layer_norm[f'{layer}_2'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            self.layer_norm[f'{layer}_2'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
             # Handle in forward
             # d. LayerNorm(Xnet(l-1))
-            self.layer_norm[f'{layer}_2'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            # self.layer_norm[f'{layer}_3'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            self.layer_norm[f'{layer}_3'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
+            
+            self.gate_proj[f'{layer}'] = nn.Linear(self.config['d_model'], 4*self.config['d_model'], bias=True)
+            
             # e. UpProjection
             self.up_proj[f'{layer}'] = nn.Linear(self.config['d_model'], 4*self.config['d_model'], bias=True)
             # f. Non-linearity
             # self.activation = nn.GELU()
             # g. DownProjection
             self.down_proj[f'{layer}'] = nn.Linear(4*self.config['d_model'], self.config['d_model'], bias=True)
+            # self.layer_norm[f'{layer}_4'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+            self.layer_norm[f'{layer}_4'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # h. Residual Connection: X(l) = Xnet(l-1) + Z2(l)
             # Handle in forward
         # 4. Final Normalization
-        self.layer_norm['final'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+        # self.layer_norm['final'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
+        self.layer_norm[f'final'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
         # 5. Logits
         self.logits = nn.Linear(self.config['d_model'], self.config['vocab_size'], bias=False)
-
 
     def set_weights(self, weights: Dict[str, Any]):
         """
@@ -157,6 +195,7 @@ class LanguageModel(nn.Module):
             query_embed = query_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
             key_embed = key_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
             value_embed = value_embed.view(batch_size, token_length, n_heads, d_head).transpose(1,2)
+            query_embed, key_embed = apply_rope(query_embed, key_embed)
             score = (query_embed @ key_embed.transpose(2, 3))/np.sqrt(d_head)
             if self.config['mode'] == "tanh-clipped":
                 score = self.config['tau'] * F.tanh(score)
@@ -167,13 +206,19 @@ class LanguageModel(nn.Module):
             z1 = z1.transpose(1,2).contiguous()
             z1 = z1.view(batch_size, token_length, d_model)
             z1 = self.output[f'{layer}'](z1)
+            z1 = self.layer_norm[f'{layer}_2'](z1)
             x_lp = x_lp + z1
             # Feedforward network
-            x_lp_norm = self.layer_norm[f'{layer}_2'](x_lp)
+            x_lp_norm = self.layer_norm[f'{layer}_3'](x_lp)
+
+            gate = self.gate_proj[f'{layer}'](x_lp_norm)
             x_lp_norm = self.up_proj[f'{layer}'](x_lp_norm)
-            x_lp_norm = F.gelu(x_lp_norm)
+            activated_gate = F.silu(gate)
+            x_lp_norm = activated_gate * x_lp_norm
+            # x_lp_norm = F.gelu(x_lp_norm)
             z2 = self.down_proj[f'{layer}'](x_lp_norm)
             xl = x_lp + z2
+            x_lp_norm = self.layer_norm[f'{layer}_4'](x_lp)
             x_lp = xl
             
         output = self.layer_norm['final'](x_lp)
