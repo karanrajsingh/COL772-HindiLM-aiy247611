@@ -21,6 +21,51 @@ from torch.optim.lr_scheduler import LambdaLR
 device = None
 tokenizer = None
 
+def evaluate_bpc_2(model, data_loader, tokenizer, device, pad_id=0):
+    """
+    Evaluates the model and calculates Bits Per Character (BPC).
+    """
+    model.eval()
+    
+    # Using reduction='sum' exactly calculates the numerator: Sum(L_i * T_i)
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=pad_id, reduction='sum')
+    
+    total_loss_sum = 0.0
+    total_characters = 0
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            
+            x = input_ids[:, :-1]
+            mask = attention_mask[:, :-1]
+            targets = input_ids[:, 1:]
+            
+            logits = model(input_ids=x, attention_mask=mask)
+            
+            # 1. Calculate Numerator: Sum of all token losses in the batch
+            loss_sum = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+            total_loss_sum += loss_sum.item()
+            
+            # 2. Calculate Denominator: Total characters in the target sequences
+            # We loop through the batch to decode the targets back into strings
+            for i in range(targets.size(0)):
+                # Extract only the valid (non-padded) tokens for this specific sequence
+                valid_tokens = targets[i][targets[i] != pad_id].tolist()
+                
+                # Use your Part B tokenizer to turn the tokens back into a string
+                decoded_str = tokenizer.decode(valid_tokens)
+                
+                # Count the actual characters
+                total_characters += len(decoded_str)
+
+    # 3. Apply the final formula
+    # BPC = sum(losses) / (Total_Chars * ln(2))
+    bpc = total_loss_sum / (total_characters * math.log(2))
+    
+    return bpc
+
 def get_cosine_scheduler(optimizer, num_training_steps, warmup_steps):
     
     def lr_lambda(current_step):
@@ -90,7 +135,7 @@ def evaluate_perplexity(model, dataloader, device, tokenizer, pad_token_id=0):
             total_loss += loss.item()
             
             # Count actual characters (BPC)
-            for seq in input_ids:
+            for seq in labels:
                 seq_no_pad = seq[seq != pad_token_id]
                 text = tokenizer.decode(seq_no_pad.tolist())
                 total_chars += len(text)
@@ -210,7 +255,7 @@ def main(args):
     # train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, collate_fn=collate_fn_2, num_workers=cpu_count())
     # valid_loader = DataLoader(valid_dataset, batch_size=512, shuffle=False, collate_fn=collate_fn_2, num_workers=cpu_count())
     
-    batch_size = 128
+    batch_size = 32
     train_batches = []
     train_batches_padded = []
     for start in range(0, len(train_tensor), batch_size):
@@ -245,13 +290,13 @@ def main(args):
 
     # model = LanguageModelEncoder(config=config).to(device)
     model = LanguageModel(config=config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-3, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
     # optimizer = get_optimizer(model, lr=5e-3, weight_decay=1e-4)
-    scheduler = get_cosine_scheduler(optimizer, total_steps, warmup_steps)
+    # scheduler = get_cosine_scheduler(optimizer, total_steps, warmup_steps)
     
 
     best_val_loss = float('inf')
-    patience = 50
+    patience = 3
 
     os.makedirs(args.output_model_path, exist_ok=True)
     pad_id = tokenizer.get_pad_id()
@@ -267,7 +312,7 @@ def main(args):
             # breakpoint()
             loss.backward()
             optimizer.step()
-            scheduler.step() 
+            # scheduler.step() 
             train_loss += loss
         avg_train_loss = train_loss/len(train_batches_padded)
         # print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss}")
@@ -310,6 +355,8 @@ def main(args):
     print(f"Validation BPC: {metrics['bpc']:.4f} bits/char")
     print(f"Validation PPL: {metrics['perplexity']:.4f}")
     print(f"Chars: {metrics['total_chars']:,}, Tokens: {metrics['total_tokens']:,}")
+    m2 = evaluate_bpc_2(model, valid_batches_padded, tokenizer, device, tokenizer.get_pad_id())
+    print(f"Other bpc {m2}")
 
 
 if __name__ == '__main__':

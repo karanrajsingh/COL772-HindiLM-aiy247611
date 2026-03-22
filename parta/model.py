@@ -92,7 +92,7 @@ class LanguageModel(nn.Module):
             self.value[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             # self.layer_norm[f'{layer}_2'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
-            self.layer_norm[f'{layer}_2'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
+            # self.layer_norm[f'{layer}_2'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
             # Handle in forward
             # d. LayerNorm(Xnet(l-1))
@@ -108,7 +108,7 @@ class LanguageModel(nn.Module):
             # g. DownProjection
             self.down_proj[f'{layer}'] = nn.Linear(4*self.config['d_model'], self.config['d_model'], bias=True)
             # self.layer_norm[f'{layer}_4'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
-            self.layer_norm[f'{layer}_4'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
+            # self.layer_norm[f'{layer}_4'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # h. Residual Connection: X(l) = Xnet(l-1) + Z2(l)
             # Handle in forward
         # 4. Final Normalization
@@ -206,7 +206,7 @@ class LanguageModel(nn.Module):
             z1 = z1.transpose(1,2).contiguous()
             z1 = z1.view(batch_size, token_length, d_model)
             z1 = self.output[f'{layer}'](z1)
-            z1 = self.layer_norm[f'{layer}_2'](z1)
+            # z1 = self.layer_norm[f'{layer}_2'](z1)
             x_lp = x_lp + z1
             # Feedforward network
             x_lp_norm = self.layer_norm[f'{layer}_3'](x_lp)
@@ -218,7 +218,7 @@ class LanguageModel(nn.Module):
             # x_lp_norm = F.gelu(x_lp_norm)
             z2 = self.down_proj[f'{layer}'](x_lp_norm)
             xl = x_lp + z2
-            x_lp_norm = self.layer_norm[f'{layer}_4'](x_lp)
+            # x_lp_norm = self.layer_norm[f'{layer}_4'](x_lp)
             x_lp = xl
             
         output = self.layer_norm['final'](x_lp)
