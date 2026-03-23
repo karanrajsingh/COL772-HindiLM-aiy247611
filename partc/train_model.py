@@ -16,9 +16,48 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 import math
+from torch.optim.lr_scheduler import LambdaLR
+import time
+
+timeout = 21120
 
 device = None
 tokenizer = None
+
+# def get_cosine_scheduler(optimizer, num_training_steps, warmup_steps):
+    
+#     def lr_lambda(current_step):
+#         if current_step < warmup_steps:
+#             return current_step / warmup_steps
+        
+#         progress = (current_step - warmup_steps) / (num_training_steps - warmup_steps)
+#         return 0.5 * (1 + math.cos(math.pi * progress))
+
+#     return LambdaLR(optimizer, lr_lambda)
+
+# def get_optimizer(model, lr=3e-4, weight_decay=0.01):
+#     decay = set()
+#     no_decay = set()
+
+#     for name, param in model.named_parameters():
+#         if not param.requires_grad:
+#             continue
+#         if name.endswith("bias") or "norm" in name.lower():
+#             no_decay.add(name)
+#         else:
+#             decay.add(name)
+
+#     param_dict = {name: param for name, param in model.named_parameters()}
+
+#     optim_groups = [
+#         {"params": [param_dict[n] for n in sorted(decay)], "weight_decay": weight_decay},
+#         {"params": [param_dict[n] for n in sorted(no_decay)], "weight_decay": 0.0},
+#     ]
+
+#     optimizer = torch.optim.AdamW(optim_groups, lr=lr)
+#     return optimizer
+
+
 
 def evaluate_perplexity(model, dataloader, device, tokenizer, pad_token_id=0):
     """
@@ -54,7 +93,7 @@ def evaluate_perplexity(model, dataloader, device, tokenizer, pad_token_id=0):
             total_loss += loss.item()
             
             # Count actual characters (BPC)
-            for seq in input_ids:
+            for seq in labels:
                 seq_no_pad = seq[seq != pad_token_id]
                 text = tokenizer.decode(seq_no_pad.tolist())
                 total_chars += len(text)
@@ -80,9 +119,9 @@ def compute_loss(logits, input_ids, pad_id=0):
     labels[:, :-1] = input_ids[:, 1:]
     labels[:, -1] = pad_id
 
-    B, T, V = logits.shape
-    logits = logits.contiguous().view(B * T, V)
-    labels = labels.contiguous().view(B * T)
+    batches, tokens, vocab_size = logits.shape
+    logits = logits.contiguous().view(batches * tokens, vocab_size)
+    labels = labels.contiguous().view(batches * tokens)
 
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_id)
     loss = loss_fn(logits, labels)
@@ -132,11 +171,23 @@ def encode_corpus(filepath):
 
 
 def main(args):
+
+    time_start = time.time()
+
     # raise NotImplementedError("This is a placeholder for the training script. Please implement the training logic here.")
     # random.seed(100)
 
-    config = read_config(Path("./parta/data/case2/config.json"))
+    # config = read_config(Path("./parta/data/case1/config.json"))
     # breakpoint()
+
+    config = {}
+    config["d_model"] = 1024
+    config["n_heads"] = 8
+    config["d_head"] = 128
+    config["n_layers"] = 12
+    config["vocab_size"] = 20000
+    config["mode"] = "standard"
+    config["dropout"] = 0.2
 
     global device
     if torch.cuda.is_available():
@@ -174,7 +225,7 @@ def main(args):
     # train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, collate_fn=collate_fn_2, num_workers=cpu_count())
     # valid_loader = DataLoader(valid_dataset, batch_size=512, shuffle=False, collate_fn=collate_fn_2, num_workers=cpu_count())
     
-    batch_size = 128
+    batch_size = 32
     train_batches = []
     train_batches_padded = []
     for start in range(0, len(train_tensor), batch_size):
@@ -203,13 +254,20 @@ def main(args):
     T2 = time.time()
     print(f"Data pre-processed in {T2-T1} seconds")
 
-    # model = LanguageModelEncoder(config=config).to(device)
+    epochs = 100000
+    total_steps = epochs * len(train_batches_padded)
+    warmup_steps = int(0.1 * total_steps)  # 10% warmup
+
+    current_lr = 1e-4
+    min_lr = 1e-7
     model = LanguageModel(config=config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-    epochs = 1000
+    optimizer = torch.optim.AdamW(model.parameters(), lr = current_lr, weight_decay=1e-4)
+    # optimizer = get_optimizer(model, lr=5e-3, weight_decay=1e-4)
+    # scheduler = get_cosine_scheduler(optimizer, total_steps, warmup_steps)
+    
 
     best_val_loss = float('inf')
-    patience = 3
+    patience = 5
 
     os.makedirs(args.output_model_path, exist_ok=True)
     pad_id = tokenizer.get_pad_id()
@@ -219,12 +277,15 @@ def main(args):
         model.train()
         for i in range(len(train_batches_padded)):
             optimizer.zero_grad()
+            # breakpoint()
             logits = model(train_batches_padded[i]['input_ids'], train_batches_padded[i]['attention_mask'])
             # breakpoint()
             loss = compute_loss(logits, train_batches_padded[i]['input_ids'], pad_id)
             # breakpoint()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=100.0)
             optimizer.step()
+            # scheduler.step() 
             train_loss += loss
         avg_train_loss = train_loss/len(train_batches_padded)
         # print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss}")
@@ -242,31 +303,41 @@ def main(args):
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), os.path.join(args.output_model_path, f"model.pt"))
+            # torch.save(model.state_dict(), os.path.join(args.output_model_path, f"model.pt"))
+            torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),"lr": current_lr}, os.path.join(args.output_model_path, "model.pt"))
         else:
             patience_counter += 1
+            # Load best checkpoint
+            checkpoint = torch.load(os.path.join(args.output_model_path, "model.pt"))
+            model.load_state_dict(checkpoint["model"])
+            optimizer.load_state_dict(checkpoint["optimizer"])
+
+            # Reduce LR
+            current_lr = max(current_lr*0.5, min_lr)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
 
 
-        print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss}, Val Loss: {avg_val_loss}, patience Counter: {patience_counter}/{patience}")
+        print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss}, Val Loss: {avg_val_loss}, patience Counter: {patience_counter}/{patience}, lr: {current_lr}")
 
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch+1}")
             break
 
-    # val_bpc = compute_bpc(model, valid_batches_padded, device)
-    # print(f"Validation BPC: {val_bpc}")
+        if time.time() - time_start > timeout:
+            print(f"Breaking out of loop as training time exceeded {timeout} seconds.")
+            break
 
-    # val_ppl = compute_perplexity(model, valid_batches_padded, device)
-    # print(f"Validation Perplexity: {val_ppl:.4f}")
     model = LanguageModel(config=config).to(device)
-    model.load_state_dict(torch.load(os.path.join(args.output_model_path, "model.pt")))
+    # model.load_state_dict(torch.load(os.path.join(args.output_model_path, "model.pt")))
+    checkpoint = torch.load(os.path.join(args.output_model_path, "model.pt"))
+    model.load_state_dict(checkpoint["model"])
     model.eval()
     model.to(device)
-    # Usage in your training script (replace line 421):
     metrics = evaluate_perplexity(model, valid_batches_padded, device, tokenizer=tokenizer, pad_token_id=tokenizer.get_pad_id())
-    print(f"Validation BPC: {metrics['bpc']:.4f} bits/char")
-    print(f"Validation PPL: {metrics['perplexity']:.4f}")
-    print(f"Chars: {metrics['total_chars']:,}, Tokens: {metrics['total_tokens']:,}")
+    print(f"Validation bpc: {metrics['bpc']}")
+    print(f"Validation perplexity: {metrics['perplexity']}")
+    print(f"Chars: {metrics['total_chars']}, Tokens: {metrics['total_tokens']}")
 
 
 if __name__ == '__main__':

@@ -8,32 +8,17 @@ import numpy as np
 max_sequence_len = 512
 device = None
 
-def apply_rope(q, k):
-    # q, k: (B, heads, T, head_dim)
-    B, H, T, D = q.shape
-    
-    assert D % 2 == 0, "head_dim must be even for RoPE"
-
-    # Create frequencies
-    theta = 10000 ** (-torch.arange(0, D, 2, device=q.device).float() / D)
-    pos = torch.arange(T, device=q.device).float()
-
-    freqs = torch.outer(pos, theta)  # (T, D/2)
-
-    cos = freqs.cos()[None, None, :, :]  # (1,1,T,D/2)
-    sin = freqs.sin()[None, None, :, :]  # (1,1,T,D/2)
-
-    # Split into even/odd
-    q1, q2 = q[..., ::2], q[..., 1::2]
-    k1, k2 = k[..., ::2], k[..., 1::2]
-
-    # Apply rotation
-    q_rot = torch.cat([q1 * cos - q2 * sin,
-                       q1 * sin + q2 * cos], dim=-1)
-
-    k_rot = torch.cat([k1 * cos - k2 * sin,
-                       k1 * sin + k2 * cos], dim=-1)
-
+def apply_rope(query, key):
+    batches, heads, tokend, d_heads = query.shape
+    theta = torch.pow(10000, (-torch.arange(0, d_heads, 2, device=query.device).float() / d_heads))
+    pos = torch.arange(tokend, device=query.device).float()
+    freqs = torch.outer(pos, theta)
+    cos = torch.unsqueeze(torch.unsqueeze(freqs.cos(), 0), 0)
+    sin = torch.unsqueeze(torch.unsqueeze(freqs.sin(), 0), 0)
+    q1, q2 = query[..., ::2], query[..., 1::2]
+    k1, k2 = key[..., ::2], key[..., 1::2]
+    q_rot = torch.cat([q1*cos-q2*sin, q1*sin+q2*cos], dim=-1)
+    k_rot = torch.cat([k1*cos-k2*sin, k1*sin+k2*cos], dim=-1)
     return q_rot, k_rot
 
 def set_device():
@@ -91,6 +76,7 @@ class LanguageModel(nn.Module):
             self.key[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.value[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
             self.output[f'{layer}'] = nn.Linear(self.config['d_model'], self.config['d_model'], bias=False)
+            self.attn_dropout = nn.Dropout(self.config["dropout"])
             # self.layer_norm[f'{layer}_2'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             # self.layer_norm[f'{layer}_2'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
             # c. Residual Connection: Xnet(l-1) = X(l-1) + Z1(l)
@@ -98,7 +84,7 @@ class LanguageModel(nn.Module):
             # d. LayerNorm(Xnet(l-1))
             # self.layer_norm[f'{layer}_3'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             self.layer_norm[f'{layer}_3'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
-            
+            self.resid_dropout = nn.Dropout(self.config["dropout"])
             self.gate_proj[f'{layer}'] = nn.Linear(self.config['d_model'], 4*self.config['d_model'], bias=True)
             
             # e. UpProjection
@@ -106,6 +92,7 @@ class LanguageModel(nn.Module):
             # f. Non-linearity
             # self.activation = nn.GELU()
             # g. DownProjection
+            self.ffn_dropout = nn.Dropout(self.config["dropout"])
             self.down_proj[f'{layer}'] = nn.Linear(4*self.config['d_model'], self.config['d_model'], bias=True)
             # self.layer_norm[f'{layer}_4'] = nn.LayerNorm(self.config['d_model'], elementwise_affine=True, bias=True)
             # self.layer_norm[f'{layer}_4'] = nn.RMSNorm(self.config['d_model'], elementwise_affine=True)
@@ -202,11 +189,13 @@ class LanguageModel(nn.Module):
             # Causal attention + Use Attention masks
             score.masked_fill_(~mask.unsqueeze(1), float("-inf"))
             score = F.softmax(score, dim=3)
+            score = self.attn_dropout(score)
             z1 = score @ value_embed
             z1 = z1.transpose(1,2).contiguous()
             z1 = z1.view(batch_size, token_length, d_model)
             z1 = self.output[f'{layer}'](z1)
             # z1 = self.layer_norm[f'{layer}_2'](z1)
+            z1 = self.resid_dropout(z1)
             x_lp = x_lp + z1
             # Feedforward network
             x_lp_norm = self.layer_norm[f'{layer}_3'](x_lp)
@@ -216,6 +205,7 @@ class LanguageModel(nn.Module):
             activated_gate = F.silu(gate)
             x_lp_norm = activated_gate * x_lp_norm
             # x_lp_norm = F.gelu(x_lp_norm)
+            x_lp_norm = self.ffn_dropout(x_lp_norm)
             z2 = self.down_proj[f'{layer}'](x_lp_norm)
             xl = x_lp + z2
             # x_lp_norm = self.layer_norm[f'{layer}_4'](x_lp)

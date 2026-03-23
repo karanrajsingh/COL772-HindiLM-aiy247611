@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import string
 
 min_freq = 5
 timeout = 10500
@@ -66,6 +67,17 @@ class BPETokenizer:
             # breakpoint()
         self.vocab = set(char_list)
 
+        # 1. Add English alphabets (a-z, A-Z)
+        self.vocab.update(string.ascii_lowercase)
+        self.vocab.update(string.ascii_uppercase)
+
+        # 2. Add digits (0-9)
+        self.vocab.update(string.digits)
+
+        # 3. Add Devanagari characters (Unicode range: U+0900 to U+097F)
+        devanagari_chars = [chr(i) for i in range(0x0900, 0x0980)]
+        self.vocab.update(devanagari_chars)
+
 
         # Parallelize loop later
         offset = len(self.tokens_to_integers)
@@ -79,8 +91,11 @@ class BPETokenizer:
             word_tokens_freq[tuple(self.initial_tokenize(word))] = freq
 
         print(f"Vocab_size: {len(self.vocab)}")
+        print(f"Tokens to integers: {len(self.tokens_to_integers)}")
 
-        while len(self.vocab) < self.vocab_size:
+        # breakpoint()
+
+        while len(self.tokens_to_integers) < self.vocab_size:
             # Build pairs, optimize for time later:
             
             pairs = {}
@@ -133,80 +148,80 @@ class BPETokenizer:
             # breakpoint()
 
 
-        if len(self.vocab) < self.vocab_size and flag:
+        # if len(self.tokens_to_integers) < self.vocab_size and flag:
 
-            word_tokens_freq = {}
-            words_spaced = []
-            sentence_word_list = []
-            # parallel
-            for sentence in corpus:
-                sentence_words = re.findall(r'\S+|\s+', sentence)
-                for word in sentence_words: # not parallel
-                    if word.isspace():
-                        words_spaced[-1] += word
-                    else:
-                        words_spaced.append(word)
-                sentence_word_list.append(words_spaced)
+        #     word_tokens_freq = {}
+        #     words_spaced = []
+        #     sentence_word_list = []
+        #     # parallel
+        #     for sentence in corpus:
+        #         sentence_words = re.findall(r'\S+|\s+', sentence)
+        #         for word in sentence_words: # not parallel
+        #             if word.isspace():
+        #                 words_spaced[-1] += word
+        #             else:
+        #                 words_spaced.append(word)
+        #         sentence_word_list.append(words_spaced)
 
-            sentence_token_list = []        
-            for sentence_words in sentence_word_list:
-                word_list = []
-                for word in sentence_words:
-                    word_list.append(self.tokens_to_integers[word])
-                sentence_token_list.append(word_list)
+        #     sentence_token_list = []        
+        #     for sentence_words in sentence_word_list:
+        #         word_list = []
+        #         for word in sentence_words:
+        #             word_list.append(self.tokens_to_integers[word])
+        #         sentence_token_list.append(word_list)
 
-            for word_list in sentence_token_list:
-                word_tokens_freq[tuple(word_list)] = word_tokens_freq.get(tuple(word_list),0) + 1
+        #     for word_list in sentence_token_list:
+        #         word_tokens_freq[tuple(word_list)] = word_tokens_freq.get(tuple(word_list),0) + 1
 
-            while len(self.vocab) < self.vocab_size:
-                # Build pairs, optimize for time later:
+        #     while len(self.tokens_to_integers) < self.vocab_size:
+        #         # Build pairs, optimize for time later:
                 
-                pairs = {}
-                for word_tokens, freq in word_tokens_freq.items(): # should not make parallel, else race condition
-                    for i in range(len(word_tokens)-1):
-                        pair = (word_tokens[i], word_tokens[i+1])
-                        pairs[pair] = pairs.get(pair, 0) + freq
-                        # update only merged pairs, rather than building pairs from scratch
+        #         pairs = {}
+        #         for word_tokens, freq in word_tokens_freq.items(): # should not make parallel, else race condition
+        #             for i in range(len(word_tokens)-1):
+        #                 pair = (word_tokens[i], word_tokens[i+1])
+        #                 pairs[pair] = pairs.get(pair, 0) + freq
+        #                 # update only merged pairs, rather than building pairs from scratch
 
-                if not pairs:
-                    print("No more pairs available for merging.")
-                    break
+        #         if not pairs:
+        #             print("No more pairs available for merging.")
+        #             break
 
-                best_pair = max(pairs, key=pairs.get)
-                if pairs[best_pair] < min_freq:
-                    print(f"Breaking out of loop as best pair frequency is less than min_freq for vocab size:{len(self.vocab)}.")
-                    break
-                self.merges.append(best_pair)
+        #         best_pair = max(pairs, key=pairs.get)
+        #         if pairs[best_pair] < min_freq:
+        #             print(f"Breaking out of loop as best pair frequency is less than min_freq for vocab size:{len(self.vocab)}.")
+        #             break
+        #         self.merges.append(best_pair)
 
-                best_pair_token = self.integers_to_tokens[best_pair[0]] + self.integers_to_tokens[best_pair[1]]
-                self.vocab.add(best_pair_token)
-                best_pair_id = len(self.tokens_to_integers)
-                self.tokens_to_integers[best_pair_token] = best_pair_id
-                self.integers_to_tokens[best_pair_id] = best_pair_token
+        #         best_pair_token = self.integers_to_tokens[best_pair[0]] + self.integers_to_tokens[best_pair[1]]
+        #         self.vocab.add(best_pair_token)
+        #         best_pair_id = len(self.tokens_to_integers)
+        #         self.tokens_to_integers[best_pair_token] = best_pair_id
+        #         self.integers_to_tokens[best_pair_id] = best_pair_token
 
-                # Update tokens
-                merged_word_tokens_freq = {}
-                for word_tokens, freq in word_tokens_freq.items():
-                    word_tokens_list = list(word_tokens)
-                    i=0
-                    while i < len(word_tokens_list)-1:
-                        pair = (word_tokens_list[i], word_tokens_list[i+1])
-                        if pair == best_pair:
-                            word_tokens_list[i] = best_pair_id
-                            word_tokens_list.pop(i+1)
-                            # track merged token pairs
-                        else:
-                            i += 1
-                    merged_word_tokens = tuple(word_tokens_list)       
-                    # merged_word_tokens_freq[merged_word_tokens] = freq
-                    merged_word_tokens_freq[merged_word_tokens] = merged_word_tokens_freq.get(merged_word_tokens, 0) + freq
-                word_tokens_freq = merged_word_tokens_freq
+        #         # Update tokens
+        #         merged_word_tokens_freq = {}
+        #         for word_tokens, freq in word_tokens_freq.items():
+        #             word_tokens_list = list(word_tokens)
+        #             i=0
+        #             while i < len(word_tokens_list)-1:
+        #                 pair = (word_tokens_list[i], word_tokens_list[i+1])
+        #                 if pair == best_pair:
+        #                     word_tokens_list[i] = best_pair_id
+        #                     word_tokens_list.pop(i+1)
+        #                     # track merged token pairs
+        #                 else:
+        #                     i += 1
+        #             merged_word_tokens = tuple(word_tokens_list)       
+        #             # merged_word_tokens_freq[merged_word_tokens] = freq
+        #             merged_word_tokens_freq[merged_word_tokens] = merged_word_tokens_freq.get(merged_word_tokens, 0) + freq
+        #         word_tokens_freq = merged_word_tokens_freq
                     
 
-                print(f"Vocab_size: {len(self.vocab)}")
-                if time.time() - time_start > timeout:
-                    print(f"Breaking out of loop as training time exceeded {timeout} seconds for vocab size:{len(self.vocab)}.")
-                    break
+        #         print(f"Vocab_size: {len(self.vocab)}")
+        #         if time.time() - time_start > timeout:
+        #             print(f"Breaking out of loop as training time exceeded {timeout} seconds for vocab size:{len(self.vocab)}.")
+        #             break
 
 
     def initial_tokenize(self, text):
@@ -283,7 +298,6 @@ class BPETokenizer:
 
         if os.path.isdir(filepath):
             filepath = os.path.join(filepath, "my_bpe.json")
-
             # raise NotImplementedError("Load method not implemented yet.")
             with open(filepath, 'r', encoding='utf-8') as f:
                 tokenizer_dict = json.load(f)

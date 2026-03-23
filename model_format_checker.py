@@ -1,15 +1,33 @@
 from partb.bpe_tokenizer import BPETokenizer
 from parta.model import LanguageModel, collate_fn
 import torch
+import json
+from pathlib import Path
+import os
 
 print("This script checks whether your model and tokenizer are compatible with the expected format for the assignment.")
 print("Make sure to implement the load_model_and_tokenizer function to load your trained model and tokenizer from the checkpoint directory, and ensure that your model and tokenizer are compatible with the check_format function.")
+
+def read_config(path: Path):
+    
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
 
 def load_model_and_tokenizer(model_path, tokenizer_path):
     """
     CHANGE THIS FUNCTION TO LOAD YOUR TRAINED MODEL AND TOKENIZER FROM THE CHECKPOINT DIRECTORY.
     """
-    raise NotImplementedError("You need to implement the load_model_and_tokenizer function to load your trained model and tokenizer from the checkpoint directory.")
+    # raise NotImplementedError("You need to implement the load_model_and_tokenizer function to load your trained model and tokenizer from the checkpoint directory.")
+    config = read_config(Path("./parta/data/case1/config.json"))
+    model = LanguageModel(config)
+    if os.path.isdir(model_path):
+        filepath = os.path.join(model_path, "model.pt")
+        checkpoint = torch.load(filepath)
+        model.load_state_dict(checkpoint["model"])
+    tokenizer = BPETokenizer(vocab_size=model.config['vocab_size'])
+    tokenizer.load(tokenizer_path)
+    return model, tokenizer
 
 
 def check_format(model, tokenizer, texts):
@@ -58,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument('--tokenizer_path', type=str, required=True, help='Path to the tokenizer checkpoint directory')
     args = parser.parse_args()
 
-    model, tokenizer = load_model_and_tokenizer(args.model_path, args.model_path)
+    model, tokenizer = load_model_and_tokenizer(args.model_path, args.tokenizer_path)
 
     # Example texts to check format
     texts = [
