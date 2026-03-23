@@ -19,7 +19,15 @@ def load_model_and_tokenizer(model_path, tokenizer_path):
     CHANGE THIS FUNCTION TO LOAD YOUR TRAINED MODEL AND TOKENIZER FROM THE CHECKPOINT DIRECTORY.
     """
     # raise NotImplementedError("You need to implement the load_model_and_tokenizer function to load your trained model and tokenizer from the checkpoint directory.")
-    config = read_config(Path("./parta/data/case1/config.json"))
+    # config = read_config(Path("./parta/data/case1/config.json"))
+    config = {}
+    config["d_model"] = 1024
+    config["n_heads"] = 8
+    config["d_head"] = 128
+    config["n_layers"] = 12
+    config["vocab_size"] = 20000
+    config["mode"] = "standard"
+    config["dropout"] = 0.2
     model = LanguageModel(config)
     if os.path.isdir(model_path):
         filepath = os.path.join(model_path, "model.pt")
