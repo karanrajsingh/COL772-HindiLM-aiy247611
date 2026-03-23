@@ -259,7 +259,7 @@ def main(args):
     warmup_steps = int(0.1 * total_steps)  # 10% warmup
 
     current_lr = 1e-4
-    min_lr = 1e-7
+    min_lr = 1e-10
     model = LanguageModel(config=config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr = current_lr, weight_decay=1e-4)
     # optimizer = get_optimizer(model, lr=5e-3, weight_decay=1e-4)
