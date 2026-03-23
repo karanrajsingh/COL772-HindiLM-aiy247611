@@ -25,13 +25,13 @@ if [ "$1" == "--train-tokenizer" ]; then
 
     # UNCOMMENT the line below to train the tokenizer.
     echo "Training the tokenizer..."
-    python3 -m partb.train_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
+    python -m partb.train_tokenizer --input_corpus_path ./data/tokenizer_corpus.txt \
       --train_path ./data/train.txt \
       --output_tokenizer_path ./partb/final_tokenizer/ --vocab_size 20000
 
 elif [ "$1" == "--train-model" ]; then
     echo "Training the model..."
-    python3 -m partc.train_model --train_path ./data/train.txt \
+    python -m partc.train_model --train_path ./data/train.txt \
         --valid_path ./data/valid.txt \
         --tokenizer_path ./partb/final_tokenizer/ \
         --output_model_path ./partc/final_model/
